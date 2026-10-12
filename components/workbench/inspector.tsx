@@ -286,26 +286,28 @@ function ValuesEditor({ element }: { element: Element }) {
         </Button>
       </header>
       {(element.values ?? []).map((value) => (
-        <div key={value.id} className="keel-grid">
+        <div key={value.id} className="space-y-1">
           <Input
             value={value.name}
             aria-label="Property name"
             onChange={(event) => editValue(element.id, value.id, { name: event.target.value })}
           />
-          <Input
-            value={value.value ?? ""}
-            aria-label="Property value"
-            onChange={(event) => editValue(element.id, value.id, { value: event.target.value })}
-          />
-          <Input
-            value={value.unit ?? ""}
-            aria-label="Property unit"
-            placeholder="unit"
-            onChange={(event) => editValue(element.id, value.id, { unit: event.target.value })}
-          />
-          <button type="button" className="keel-text-button" onClick={() => removeValue(element.id, value.id)}>
-            Remove
-          </button>
+          <div className="grid grid-cols-[minmax(0,1fr)_4.5rem_auto] items-center gap-1">
+            <Input
+              value={value.value ?? ""}
+              aria-label="Property value"
+              onChange={(event) => editValue(element.id, value.id, { value: event.target.value })}
+            />
+            <Input
+              value={value.unit ?? ""}
+              aria-label="Property unit"
+              placeholder="unit"
+              onChange={(event) => editValue(element.id, value.id, { unit: event.target.value })}
+            />
+            <button type="button" className="keel-text-button" onClick={() => removeValue(element.id, value.id)}>
+              Remove
+            </button>
+          </div>
         </div>
       ))}
       {(element.values ?? []).length === 0 ? <p className="keel-note">No value properties yet.</p> : null}
