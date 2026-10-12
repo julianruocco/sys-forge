@@ -224,6 +224,12 @@
   gap: 6px;
 }
 
+.keel-top-actions button {
+  color: #13293d;
+  background: #f4f7fb;
+  border-color: #d5dee8;
+}
+
 .keel-tabs {
   gap: 0;
   overflow-x: auto;

@@ -1,4 +1,3 @@
-import { connection } from "next/server"
 import { mkdir, readFile, writeFile } from "node:fs/promises"
 import path from "node:path"
 import { aetherModel } from "@/lib/mbse/seed"
@@ -22,7 +21,6 @@ function isModel(value: unknown): value is MbseModel {
 }
 
 export async function GET() {
-  await connection()
   const file = modelPath()
   try {
     const text = await readFile(file, "utf8")
@@ -39,7 +37,6 @@ export async function GET() {
 }
 
 export async function PUT(request: Request) {
-  await connection()
   let body: unknown
   try {
     body = await request.json()

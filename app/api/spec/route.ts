@@ -1,4 +1,3 @@
-import { connection } from "next/server"
 import { mkdir, writeFile } from "node:fs/promises"
 import path from "node:path"
 import { toMarkdown } from "@/lib/mbse/queries"
@@ -6,7 +5,6 @@ import { MODEL_SCHEMA, SPEC_FILE } from "@/lib/mbse/types"
 import type { MbseModel } from "@/lib/mbse/types"
 
 export async function PUT(request: Request) {
-  await connection()
   let body: unknown
   try {
     body = await request.json()

@@ -93,7 +93,14 @@ function Box({
         <div className="sysml-title">{title}</div>
       </div>
       {children}
-      {showPorts && ports && ports.length > 0 ? <PortHandles ports={ports} /> : null}
+      {showPorts && ports && ports.length > 0 ? (
+        <PortHandles ports={ports} />
+      ) : (
+        <>
+          <Handle type="target" position={Position.Top} />
+          <Handle type="source" position={Position.Bottom} />
+        </>
+      )}
     </div>
   )
 }

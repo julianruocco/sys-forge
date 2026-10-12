@@ -119,16 +119,10 @@ function Body({
   }
   if (node.shape === "envelope") {
     return (
-      <group>
-        <mesh onClick={onClick}>
-          <boxGeometry args={[node.size.x, node.size.z, node.size.y]} />
-          <meshBasicMaterial color="#5d6d7c" wireframe transparent opacity={0.45} />
-        </mesh>
-        <mesh onClick={onClick}>
-          <boxGeometry args={[node.size.x, node.size.z, node.size.y]} />
-          <meshBasicMaterial transparent opacity={0.03} depthWrite={false} />
-        </mesh>
-      </group>
+      <mesh raycast={() => null}>
+        <boxGeometry args={[node.size.x, node.size.z, node.size.y]} />
+        <meshBasicMaterial color="#5d6d7c" wireframe transparent opacity={0.55} />
+      </mesh>
     )
   }
   if (node.shape === "cylinder") {
