@@ -132,12 +132,12 @@ function adopt(model: MbseModel, previousDiagramId: string | null) {
 }
 
 export const useMbse = create<MbseState>((set, get) => ({
-  model: null,
-  status: "loading",
+  model: structuredClone(aetherModel),
+  status: "ready",
   saveState: "saved",
   saveGen: 0,
-  issues: [],
-  activeDiagramId: null,
+  issues: validate(aetherModel),
+  activeDiagramId: "dia-bdd",
   view: "diagram",
   tool: "select",
   linkFromNodeId: null,
@@ -147,9 +147,13 @@ export const useMbse = create<MbseState>((set, get) => ({
   future: [],
 
   load: async () => {
-    set({ status: "loading", error: undefined })
+    const hadModel = Boolean(get().model)
+    if (!hadModel) set({ status: "loading", error: undefined })
     try {
-      const response = await fetch("/api/model", { cache: "no-store" })
+      const response = await fetch("/api/model", {
+        cache: "no-store",
+        signal: AbortSignal.timeout(8000),
+      })
       if (!response.ok) throw new Error("The model file could not be read.")
       const model = (await response.json()) as MbseModel
       if (model.schema !== MODEL_SCHEMA) throw new Error("This file is not a Keel model.")
@@ -158,7 +162,7 @@ export const useMbse = create<MbseState>((set, get) => ({
         status: "ready",
         saveState: "saved",
         issues: validate(model),
-        activeDiagramId: adopt(model, null),
+        activeDiagramId: adopt(model, get().activeDiagramId),
         past: [],
         future: [],
         selection: EMPTY_SELECTION,
@@ -166,6 +170,7 @@ export const useMbse = create<MbseState>((set, get) => ({
         linkFromNodeId: null,
       })
     } catch (error) {
+      if (hadModel) return
       set({
         status: "error",
         error: error instanceof Error ? error.message : "The model could not be opened.",
