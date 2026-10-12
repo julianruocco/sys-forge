@@ -50,11 +50,15 @@ export type Port = {
 
 export type Geometry = {
   /** Millimeters. Cylinder uses x as diameter and z as length. */
-  shape: "box" | "cylinder" | "frame" | "envelope"
+  shape: "box" | "cylinder" | "frame" | "envelope" | "stl"
   x: number
   y: number
   z: number
   color: string
+  /** Uploaded STL asset. The file is treated as millimeters, then multiplied by stlScale. */
+  stlId?: string
+  stlName?: string
+  stlScale?: number
 }
 
 export type Measure = {

@@ -1,9 +1,10 @@
 "use client"
 
-import { Component, type ReactNode } from "react"
+import { Component, Suspense, useEffect, useMemo, type ReactNode } from "react"
 import { Grid, OrbitControls } from "@react-three/drei"
-import { Canvas } from "@react-three/fiber"
+import { Canvas, useLoader } from "@react-three/fiber"
 import type { ThreeEvent } from "@react-three/fiber"
+import { STLLoader } from "three/examples/jsm/loaders/STLLoader.js"
 import { assemblyRoot, rollup, solidTree, type SolidNode } from "@/lib/mbse/queries"
 import { useMbse } from "@/lib/mbse/store"
 
@@ -25,7 +26,7 @@ export function AssemblyView() {
   return (
     <div className="relative h-full min-h-0">
       <AssemblyBoundary>
-        <Canvas camera={{ position: [420, 240, 520], fov: 32, near: 0.1, far: 8000 }} gl={{ antialias: true }}>
+        <Canvas camera={{ position: [420, 240, 520], fov: 32, near: 0.1, far: 50000 }} gl={{ antialias: true }}>
           <color attach="background" args={["#e7edf2"]} />
           <ambientLight intensity={0.62} />
           <directionalLight position={[220, 380, 180]} intensity={1.45} />
@@ -49,6 +50,7 @@ export function AssemblyView() {
         <span>{mass.toFixed(2)} kg rolled up</span>
         <span>{draw.toFixed(2)} W orbit-average draw</span>
         <span>Drag to orbit. Click a solid to select its part.</span>
+        {treeHasStl(tree) ? <span>STL meshes use file units as millimeters.</span> : null}
       </div>
     </div>
   )
@@ -125,6 +127,17 @@ function Body({
       </mesh>
     )
   }
+  if (node.shape === "stl") {
+    const fallback = <SolidMaterial node={node} selected={selected} onClick={onClick} />
+    if (!node.stlId) return fallback
+    return (
+      <MeshBoundary fallback={fallback}>
+        <Suspense fallback={fallback}>
+          <StlMesh node={node} selected={selected} onClick={onClick} />
+        </Suspense>
+      </MeshBoundary>
+    )
+  }
   if (node.shape === "cylinder") {
     return (
       <mesh onClick={onClick}>
@@ -139,6 +152,19 @@ function Body({
       </mesh>
     )
   }
+  return <SolidMaterial node={node} selected={selected} onClick={onClick} />
+}
+
+function SolidMaterial({
+  node,
+  selected,
+  onClick,
+}: {
+  node: SolidNode
+  selected: boolean
+  onClick: (event: ThreeEvent<MouseEvent>) => void
+}) {
+  const color = selected ? "#e2a322" : node.color
   return (
     <mesh onClick={onClick}>
       <boxGeometry args={[node.size.x, node.size.z, node.size.y]} />
@@ -151,6 +177,55 @@ function Body({
       />
     </mesh>
   )
+}
+
+function StlMesh({
+  node,
+  selected,
+  onClick,
+}: {
+  node: SolidNode
+  selected: boolean
+  onClick: (event: ThreeEvent<MouseEvent>) => void
+}) {
+  const projectId = useMbse((state) => state.projectId)
+  const geometry = useLoader(STLLoader, `/api/projects/${projectId}/stl/${node.stlId}`)
+  const centered = useMemo(() => {
+    const next = geometry.clone()
+    next.computeVertexNormals()
+    next.center()
+    return next
+  }, [geometry])
+  useEffect(() => () => centered.dispose(), [centered])
+  const scale = node.stlScale && node.stlScale > 0 ? node.stlScale : 1
+  const color = selected ? "#e2a322" : node.color
+  return (
+    <mesh geometry={centered} scale={scale} onClick={onClick}>
+      <meshStandardMaterial
+        color={color}
+        metalness={0.35}
+        roughness={0.42}
+        emissive={selected ? "#8a5a00" : "#000000"}
+        emissiveIntensity={selected ? 0.25 : 0}
+      />
+    </mesh>
+  )
+}
+
+function treeHasStl(node: SolidNode): boolean {
+  return node.shape === "stl" || node.children.some(treeHasStl)
+}
+
+class MeshBoundary extends Component<{ children: ReactNode; fallback: ReactNode }, { failed: boolean }> {
+  state = { failed: false }
+
+  static getDerivedStateFromError() {
+    return { failed: true }
+  }
+
+  render() {
+    return this.state.failed ? this.props.fallback : this.props.children
+  }
 }
 
 class AssemblyBoundary extends Component<{ children: ReactNode }, { failed: boolean }> {

@@ -25,6 +25,7 @@ function CanvasInner() {
   const diagramId = useMbse((state) => state.activeDiagramId)
   const selection = useMbse((state) => state.selection)
   const tool = useMbse((state) => state.tool)
+  const canEdit = useMbse((state) => state.canEdit)
   const linkFromNodeId = useMbse((state) => state.linkFromNodeId)
   const place = useMbse((state) => state.place)
   const link = useMbse((state) => state.link)
@@ -167,7 +168,8 @@ function CanvasInner() {
           if (node.type === "frame") return
           dragNode(node.id, node.position.x, node.position.y)
         }}
-        nodesConnectable
+        nodesDraggable={canEdit}
+        nodesConnectable={canEdit}
       >
         <Background variant={BackgroundVariant.Dots} gap={18} size={1.1} color="#d3dae3" />
         <SysmlMarkers />

@@ -1,8 +1,13 @@
 "use client"
 
 import dynamic from "next/dynamic"
+import Link from "next/link"
+import { useRouter } from "next/navigation"
 import { useEffect, useState } from "react"
-import { Button } from "@/components/ui/button"
+import { setNavigator } from "@/lib/navigate"
+import { ShareDialog } from "@/components/site/share-dialog"
+import { SignOut } from "@/components/site/sign-out"
+import { Button, buttonVariants } from "@/components/ui/button"
 import {
   Dialog,
   DialogContent,
@@ -21,6 +26,7 @@ import {
 } from "@/components/ui/select"
 import { useMbse } from "@/lib/mbse/store"
 import type { DiagramKind, Tool, WorkbenchView } from "@/lib/mbse/types"
+import type { SiteUser } from "@/lib/site"
 import { DiagramCanvas } from "./diagram-canvas"
 import { Inspector } from "./inspector"
 import { MatrixView } from "./matrix-view"
@@ -56,48 +62,58 @@ const TOOLS: { id: Tool; label: string }[] = [
   { id: "connector", label: "Connector" },
 ]
 
-export function Workbench() {
+export function Workbench({ projectId, user }: { projectId: string; user: SiteUser }) {
   const status = useMbse((state) => state.status)
   const error = useMbse((state) => state.error)
   const load = useMbse((state) => state.load)
+  const router = useRouter()
 
   useEffect(() => {
-    void load()
-  }, [load])
+    setNavigator((path) => {
+      router.push(path)
+      router.refresh()
+    })
+  }, [router])
+
+  useEffect(() => {
+    void load(projectId)
+  }, [load, projectId])
 
   if (status === "loading") {
     return (
       <div className="keel">
-        <TopBar />
-        <div className="keel-empty">Opening the Aether-1 model…</div>
+        <TopBar user={user} />
+        <div className="keel-empty">Opening the project…</div>
       </div>
     )
   }
   if (status === "error") {
     return (
       <div className="keel">
-        <TopBar />
+        <TopBar user={user} />
         <div className="keel-empty">
           <p>{error ?? "The model could not be opened."}</p>
-          <Button className="mt-3" onClick={() => void load()}>
+          <Button className="mt-3" onClick={() => void load(projectId)}>
             Try again
           </Button>
         </div>
       </div>
     )
   }
-  return <Shell />
+  return <Shell user={user} projectId={projectId} />
 }
 
-function Shell() {
+function Shell({ user, projectId }: { user: SiteUser; projectId: string }) {
   const model = useMbse((state) => state.model)
   const saveState = useMbse((state) => state.saveState)
   const view = useMbse((state) => state.view)
   const tool = useMbse((state) => state.tool)
+  const canEdit = useMbse((state) => state.canEdit)
   const linkFromNodeId = useMbse((state) => state.linkFromNodeId)
   const [mobilePane, setMobilePane] = useState<"tree" | "stage" | "spec">("stage")
   const [diagramOpen, setDiagramOpen] = useState(false)
   const [resetOpen, setResetOpen] = useState(false)
+  const [shareOpen, setShareOpen] = useState(false)
 
   useEffect(() => {
     const onKey = (event: KeyboardEvent) => {
@@ -130,6 +146,7 @@ function Shell() {
         state.redo()
         return
       }
+      if (!state.canEdit) return
       if (event.key === "Backspace" || event.key === "Delete") {
         event.preventDefault()
         if (event.shiftKey) state.deleteSelectedElement()
@@ -167,13 +184,20 @@ function Shell() {
           : ["block", "requirement", "package", "constraint"].includes(tool)
             ? `Click the canvas to place a ${tool}.`
             : `Click the source, then the target, to add a ${tool} link.`
-        : null
+        : !canEdit
+          ? "You can review this project. Editing is off for your account."
+          : null
 
   return (
     <div className="keel">
-      <TopBar onNewDiagram={() => setDiagramOpen(true)} onReset={() => setResetOpen(true)} />
+      <TopBar
+        user={user}
+        onNewDiagram={() => setDiagramOpen(true)}
+        onReset={() => setResetOpen(true)}
+        onShare={() => setShareOpen(true)}
+      />
       {view === "diagram" ? <DiagramTabs /> : null}
-      {view === "diagram" ? (
+      {view === "diagram" && canEdit ? (
         <div className="keel-tools">
           {TOOLS.map((item) => (
             <button
@@ -199,12 +223,12 @@ function Shell() {
           {view === "matrix" ? <MatrixView /> : null}
           {view === "spec" ? <SpecView /> : null}
         </main>
-        <aside className={`keel-side keel-inspector${mobilePane === "spec" ? " is-open" : ""}`}>
+        <aside className={`keel-side keel-inspector${mobilePane === "spec" ? " is-open" : ""}${canEdit ? "" : " is-locked"}`}>
           <Inspector />
         </aside>
       </div>
       <footer className="keel-footer">
-        <span>model/aether-1.mbse.json</span>
+        <span>{`data/projects/${projectId}/model.json`}</span>
         <span>{saveLabel(saveState)}</span>
         <span className="hidden md:inline">Delete removes a symbol. Shift+Delete deletes the element.</span>
         <Issues />
@@ -222,19 +246,34 @@ function Shell() {
       </nav>
       <NewDiagramDialog open={diagramOpen} onOpenChange={setDiagramOpen} />
       <ResetDialog open={resetOpen} onOpenChange={setResetOpen} />
+      <ShareDialog projectId={projectId} open={shareOpen} onOpenChange={setShareOpen} />
     </div>
   )
 }
 
-function TopBar({ onNewDiagram, onReset }: { onNewDiagram?: () => void; onReset?: () => void }) {
+function TopBar({
+  user,
+  onNewDiagram,
+  onReset,
+  onShare,
+}: {
+  user: SiteUser
+  onNewDiagram?: () => void
+  onReset?: () => void
+  onShare?: () => void
+}) {
   const model = useMbse((state) => state.model)
   const view = useMbse((state) => state.view)
+  const canEdit = useMbse((state) => state.canEdit)
+  const status = useMbse((state) => state.status)
+  const accessRole = useMbse((state) => state.accessRole)
   const setView = useMbse((state) => state.setView)
   const undo = useMbse((state) => state.undo)
   const redo = useMbse((state) => state.redo)
   const save = useMbse((state) => state.save)
   const past = useMbse((state) => state.past.length)
   const future = useMbse((state) => state.future.length)
+  const canManage = accessRole === "owner" || accessRole === "admin" || user.role === "admin"
   return (
     <header className="keel-top">
       <div className="keel-brand">
@@ -259,21 +298,41 @@ function TopBar({ onNewDiagram, onReset }: { onNewDiagram?: () => void; onReset?
         ))}
       </div>
       <div className="keel-top-actions">
-        <Button size="xs" variant="outline" onClick={undo} disabled={past === 0}>
-          Undo
-        </Button>
-        <Button size="xs" variant="outline" onClick={redo} disabled={future === 0}>
-          Redo
-        </Button>
-        <Button size="xs" variant="outline" onClick={onNewDiagram} disabled={!model || !onNewDiagram}>
-          New diagram
-        </Button>
-        <Button size="xs" variant="outline" onClick={() => void save()} disabled={!model}>
-          Save
-        </Button>
-        <Button size="xs" variant="ghost" onClick={onReset} disabled={!model || !onReset}>
-          Reset example
-        </Button>
+        <Link href="/projects" className={buttonVariants({ size: "xs", variant: "outline" })}>
+          Projects
+        </Link>
+        {user.role === "admin" ? (
+          <Link href="/people" className={buttonVariants({ size: "xs", variant: "outline" })}>
+            People
+          </Link>
+        ) : null}
+        {canManage && onShare ? (
+          <Button size="xs" variant="outline" onClick={onShare}>
+            Access
+          </Button>
+        ) : null}
+        {status === "ready" && canEdit ? (
+          <>
+            <Button size="xs" variant="outline" onClick={undo} disabled={past === 0}>
+              Undo
+            </Button>
+            <Button size="xs" variant="outline" onClick={redo} disabled={future === 0}>
+              Redo
+            </Button>
+            <Button size="xs" variant="outline" onClick={onNewDiagram} disabled={!model || !onNewDiagram}>
+              New diagram
+            </Button>
+            <Button size="xs" variant="outline" onClick={() => void save()} disabled={!model}>
+              Save
+            </Button>
+            <Button size="xs" variant="ghost" onClick={onReset} disabled={!model || !onReset}>
+              Reset example
+            </Button>
+          </>
+        ) : status === "ready" ? (
+          <span className="keel-viewonly">View only</span>
+        ) : null}
+        <SignOut />
       </div>
     </header>
   )
@@ -367,7 +426,7 @@ function ResetDialog({ open, onOpenChange }: { open: boolean; onOpenChange: (ope
         <DialogHeader>
           <DialogTitle>Reset to the Aether-1 example?</DialogTitle>
           <DialogDescription>
-            This replaces the working model with the CubeSat example and writes that model back to disk.
+            This replaces the open project with the CubeSat example and writes that model back to the project.
           </DialogDescription>
         </DialogHeader>
         <DialogFooter>

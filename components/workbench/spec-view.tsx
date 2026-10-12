@@ -13,12 +13,14 @@ import {
   unsatisfiedRequirements,
 } from "@/lib/mbse/queries"
 import { useMbse } from "@/lib/mbse/store"
-import { SPEC_FILE } from "@/lib/mbse/types"
 
 export function SpecView() {
   const model = useMbse((state) => state.model)
+  const projectId = useMbse((state) => state.projectId)
+  const canEdit = useMbse((state) => state.canEdit)
   const selectElement = useMbse((state) => state.selectElement)
   const [writeState, setWriteState] = useState<"idle" | "writing" | "done" | "error">("idle")
+  const [specPath, setSpecPath] = useState("")
   if (!model) return null
   const root = assemblyRoot(model)
   const mass = root ? rollup(model, root.id, "mass") : 0
@@ -31,13 +33,20 @@ export function SpecView() {
   const open = unsatisfiedRequirements(model)
 
   async function writeSpec() {
+    if (!projectId) return
     setWriteState("writing")
-    const response = await fetch("/api/spec", {
+    const response = await fetch(`/api/projects/${projectId}/spec`, {
       method: "PUT",
       headers: { "content-type": "application/json" },
       body: JSON.stringify(model),
     })
-    setWriteState(response.ok ? "done" : "error")
+    if (response.ok) {
+      const body = (await response.json()) as { path?: string }
+      setWriteState("done")
+      setSpecPath(body.path ?? `data/projects/${projectId}/spec.md`)
+      return
+    }
+    setWriteState("error")
   }
 
   return (
@@ -49,9 +58,11 @@ export function SpecView() {
         <p className="text-xs text-muted-foreground">Version {model.project.version}</p>
 
         <div className="mt-4 flex flex-wrap gap-2">
-          <Button size="sm" onClick={() => void writeSpec()} disabled={writeState === "writing"}>
-            {writeState === "writing" ? "Writing…" : `Write ${SPEC_FILE}`}
-          </Button>
+          {canEdit ? (
+            <Button size="sm" onClick={() => void writeSpec()} disabled={writeState === "writing" || !projectId}>
+              {writeState === "writing" ? "Writing…" : "Write spec.md"}
+            </Button>
+          ) : null}
           <Button
             size="sm"
             variant="outline"
@@ -59,7 +70,7 @@ export function SpecView() {
           >
             Copy Markdown
           </Button>
-          {writeState === "done" ? <span className="self-center text-xs">Wrote {SPEC_FILE}</span> : null}
+          {writeState === "done" ? <span className="self-center text-xs">Wrote {specPath}</span> : null}
           {writeState === "error" ? <span className="self-center text-xs text-destructive">Could not write the spec.</span> : null}
         </div>
 

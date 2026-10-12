@@ -189,6 +189,9 @@ export function validate(model: MbseModel) {
     for (const part of element.parts ?? []) {
       if (!ids.has(part.typeId)) issues.push(`${element.name}.${part.name} types a missing block`)
     }
+    if (element.geometry?.shape === "stl" && !element.geometry.stlId) {
+      issues.push(`${element.name} is an STL solid with no file attached`)
+    }
   }
   const relIds = new Set<string>()
   for (const relationship of model.relationships) {
@@ -320,6 +323,8 @@ export type SolidNode = {
   shape: NonNullable<Element["geometry"]>["shape"]
   size: { x: number; y: number; z: number }
   color: string
+  stlId?: string
+  stlScale?: number
   position: { x: number; y: number; z: number }
   children: SolidNode[]
 }
@@ -359,6 +364,8 @@ export function solidTree(
     shape: element.geometry.shape,
     size: { x: element.geometry.x, y: element.geometry.y, z: element.geometry.z },
     color: element.geometry.color,
+    stlId: element.geometry.stlId,
+    stlScale: element.geometry.stlScale,
     position: part?.placement ?? { x: 0, y: 0, z: 0 },
     children,
   }
@@ -374,7 +381,15 @@ export function toMarkdown(model: MbseModel) {
   lines.push(`# ${model.project.name}`, "")
   lines.push(model.project.description, "")
   lines.push(`Version ${model.project.version}`, "")
-  lines.push("This spec is generated from `model/aether-1.mbse.json`. Edit the model, then write the spec again.", "")
+  lines.push("This spec is generated from the project model. Edit the model, then write the spec again.", "")
+  const stlBlocks = model.elements.filter((element) => element.geometry?.shape === "stl" && element.geometry.stlName)
+  if (stlBlocks.length > 0) {
+    lines.push("## STL solids", "")
+    for (const block of stlBlocks) {
+      lines.push(`- ${block.name}: ${block.geometry?.stlName}`)
+    }
+    lines.push("")
+  }
 
   if (root) {
     const mass = rollup(model, root.id, "mass")

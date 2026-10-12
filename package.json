@@ -3,11 +3,11 @@
   "version": "0.1.0",
   "private": true,
   "scripts": {
-    "dev": "next dev -p 3847 -H 0.0.0.0",
+    "dev": "node --disable-warning=ExperimentalWarning ./node_modules/next/dist/bin/next dev -p 3847 -H 0.0.0.0",
     "build": "next build",
-    "start": "next start -p 3847 -H 0.0.0.0",
+    "start": "node --disable-warning=ExperimentalWarning ./node_modules/next/dist/bin/next start -p 3847 -H 0.0.0.0",
     "lint": "eslint",
-    "test": "tsx --test lib/mbse/queries.test.ts"
+    "test": "node --disable-warning=ExperimentalWarning ./node_modules/tsx/dist/cli.mjs --test lib/mbse/queries.test.ts lib/mbse/stl.test.ts lib/server/accounts.test.ts"
   },
   "dependencies": {
     "@base-ui/react": "^1.9.0",

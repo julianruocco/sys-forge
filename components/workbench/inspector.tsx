@@ -89,6 +89,7 @@ function nameOf(model: NonNullable<ReturnType<typeof useMbse.getState>["model"]>
 
 function ProjectPane() {
   const model = useMbse((state) => state.model)
+  const projectId = useMbse((state) => state.projectId)
   const editProject = useMbse((state) => state.editProject)
   if (!model) return null
   const root = model.elements.find((element) => (element.parts?.length ?? 0) > 0)
@@ -111,7 +112,7 @@ function ProjectPane() {
       <p className="keel-note">
         {model.elements.length} elements, {model.diagrams.length} diagrams
         {root ? `, ${mass.toFixed(2)} kg rolled up from ${root.name}` : ""}. Select something in the tree or on a diagram
-        to edit it. The file on disk is model/aether-1.mbse.json.
+        to edit it. The file on disk is {projectId ? `data/projects/${projectId}/model.json` : "the project model"}.
       </p>
     </Pane>
   )
@@ -438,6 +439,10 @@ function PartsEditor({ element }: { element: Element }) {
 
 function GeometryEditor({ element }: { element: Element }) {
   const editGeometry = useMbse((state) => state.editGeometry)
+  const projectId = useMbse((state) => state.projectId)
+  const fileRef = useRef<HTMLInputElement>(null)
+  const [uploadState, setUploadState] = useState<"idle" | "uploading" | "error">("idle")
+  const [uploadError, setUploadError] = useState("")
   const geometry = element.geometry
   if (!geometry) {
     return (
@@ -454,47 +459,148 @@ function GeometryEditor({ element }: { element: Element }) {
         >
           Add a solid
         </Button>
-        <p className="keel-note">Solids are parametric, in millimeters, and show up in the assembly view.</p>
+        <p className="keel-note">Solids are parametric, in millimeters, and show up in the assembly view. A block can also carry an STL file.</p>
       </section>
     )
   }
-  const patch = (next: Partial<Geometry>) => editGeometry(element.id, { ...geometry, ...next })
+  const solid = geometry
+  const patch = (next: Partial<Geometry>) => editGeometry(element.id, { ...solid, ...next })
+
+  async function upload(file: File) {
+    if (!projectId) return
+    if (!file.name.toLowerCase().endsWith(".stl")) {
+      setUploadState("error")
+      setUploadError("Use a .stl file.")
+      return
+    }
+    if (file.size > 32 * 1024 * 1024) {
+      setUploadState("error")
+      setUploadError("STL files need to be 32 MB or smaller.")
+      return
+    }
+    setUploadState("uploading")
+    setUploadError("")
+    try {
+      const body = new FormData()
+      body.set("file", file)
+      const response = await fetch(`/api/projects/${projectId}/stl`, { method: "POST", body })
+      const payload = (await response.json()) as { id?: string; name?: string; error?: string }
+      if (!response.ok || !payload.id || !payload.name) {
+        setUploadState("error")
+        setUploadError(payload.error ?? "The STL could not be stored.")
+        return
+      }
+      const previous = solid.stlId
+      editGeometry(element.id, {
+        ...solid,
+        shape: "stl",
+        stlId: payload.id,
+        stlName: payload.name,
+        stlScale: solid.stlScale ?? 1,
+      })
+      if (previous && previous !== payload.id) forgetStl(previous)
+      setUploadState("idle")
+    } catch {
+      setUploadState("error")
+      setUploadError("The server did not answer.")
+    }
+  }
+
   return (
     <section className="keel-section">
       <header>
         <h3>Geometry</h3>
-        <Button size="xs" variant="ghost" onClick={() => editGeometry(element.id, undefined)}>
+        <Button
+          size="xs"
+          variant="ghost"
+          onClick={() => {
+            const previous = solid.stlId
+            editGeometry(element.id, undefined)
+            if (previous) forgetStl(previous)
+          }}
+        >
           Clear
         </Button>
       </header>
       <Field label="Shape">
         <Choice
-          value={geometry.shape}
+          value={solid.shape}
           onChange={(shape) => patch({ shape })}
           options={[
             { value: "box", label: "Box" },
             { value: "cylinder", label: "Cylinder" },
             { value: "frame", label: "Frame rails" },
             { value: "envelope", label: "Envelope" },
+            { value: "stl", label: "STL file" },
           ]}
         />
       </Field>
       <div className="grid grid-cols-3 gap-1">
         {(["x", "y", "z"] as const).map((axis) => (
-          <Field key={axis} label={axis === "x" && geometry.shape === "cylinder" ? "diameter" : `${axis} mm`}>
+          <Field key={axis} label={axis === "x" && solid.shape === "cylinder" ? "diameter" : `${axis} mm`}>
             <Input
               type="number"
-              value={geometry[axis]}
+              value={solid[axis]}
               onChange={(event) => patch({ [axis]: Number(event.target.value) })}
             />
           </Field>
         ))}
       </div>
       <Field label="Color">
-        <Input type="color" value={geometry.color} onChange={(event) => patch({ color: event.target.value })} />
+        <Input type="color" value={solid.color} onChange={(event) => patch({ color: event.target.value })} />
       </Field>
+      {solid.shape === "stl" ? (
+        <div
+          className="keel-stl-drop"
+          onDragOver={(event) => event.preventDefault()}
+          onDrop={(event) => {
+            event.preventDefault()
+            const file = event.dataTransfer.files[0]
+            if (file) void upload(file)
+          }}
+        >
+          <input
+            ref={fileRef}
+            type="file"
+            accept=".stl,model/stl"
+            hidden
+            onChange={(event) => {
+              const file = event.target.files?.[0]
+              event.target.value = ""
+              if (file) void upload(file)
+            }}
+          />
+          <Button type="button" size="sm" variant="outline" onClick={() => fileRef.current?.click()} disabled={uploadState === "uploading"}>
+            {uploadState === "uploading" ? "Uploading…" : solid.stlName ? "Replace STL" : "Upload STL"}
+          </Button>
+          <p className="keel-note">
+            {solid.stlName
+              ? `${solid.stlName} is stored on this block. Each part usage places it in the assembly.`
+              : "Drop a .stl file here, or choose one. The mesh is shared by every usage of this block."}
+          </p>
+          <Field label="Scale">
+            <Input
+              type="number"
+              min={0.0001}
+              step={0.1}
+              value={solid.stlScale ?? 1}
+              onChange={(event) => patch({ stlScale: Number(event.target.value) })}
+            />
+          </Field>
+          <p className="keel-note">File units are treated as millimeters. Use 1000 if the file was exported in meters. Envelope checks still use the sizes above.</p>
+          {uploadError ? <p className="site-error">{uploadError}</p> : null}
+        </div>
+      ) : null}
     </section>
   )
+}
+
+function forgetStl(assetId: string) {
+  const state = useMbse.getState()
+  if (!state.projectId || !state.model) return
+  const stillUsed = state.model.elements.some((item) => item.geometry?.stlId === assetId)
+  if (stillUsed) return
+  void fetch(`/api/projects/${state.projectId}/stl/${assetId}`, { method: "DELETE" })
 }
 
 function PartUsage({ ownerId, partId }: { ownerId: string; partId: string }) {

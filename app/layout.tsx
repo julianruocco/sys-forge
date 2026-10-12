@@ -16,8 +16,8 @@ const mono = IBM_Plex_Mono({
 })
 
 export const metadata: Metadata = {
-  title: "Keel — Aether-1",
-  description: "A systems modeling workbench for the Aether-1 CubeSat. Diagrams, requirements, and assembly geometry share one editable model.",
+  title: "Keel",
+  description: "A systems modeling workbench. Diagrams, requirements, and assembly geometry share one editable model per project.",
 }
 
 export default function RootLayout({ children }: LayoutProps<"/">) {

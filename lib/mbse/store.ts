@@ -1,6 +1,8 @@
 "use client"
 
 import { create } from "zustand"
+import { goTo } from "@/lib/navigate"
+import type { ProjectRole } from "@/lib/site"
 import {
   addPart,
   addPort,
@@ -47,6 +49,9 @@ type SaveState = "saved" | "dirty" | "saving" | "error"
 
 type MbseState = {
   model: MbseModel | null
+  projectId: string | null
+  canEdit: boolean
+  accessRole: ProjectRole | null
   status: "loading" | "ready" | "error"
   error?: string
   saveState: SaveState
@@ -60,7 +65,7 @@ type MbseState = {
   focusName: boolean
   past: MbseModel[]
   future: MbseModel[]
-  load: () => Promise<void>
+  load: (projectId: string) => Promise<void>
   reload: () => Promise<void>
   save: () => Promise<void>
   resetExample: () => void
@@ -126,18 +131,32 @@ function applyModel(
   }
 }
 
+let loadSerial = 0
+
+async function readError(response: Response, fallback: string) {
+  try {
+    const body = (await response.json()) as { error?: string }
+    return body.error || fallback
+  } catch {
+    return fallback
+  }
+}
+
 function adopt(model: MbseModel, previousDiagramId: string | null) {
   const stillThere = model.diagrams.some((diagram) => diagram.id === previousDiagramId)
   return stillThere ? previousDiagramId : (model.diagrams.find((diagram) => diagram.id === "dia-bdd")?.id ?? model.diagrams[0]?.id ?? null)
 }
 
 export const useMbse = create<MbseState>((set, get) => ({
-  model: structuredClone(aetherModel),
-  status: "ready",
+  model: null,
+  projectId: null,
+  canEdit: false,
+  accessRole: null,
+  status: "loading",
   saveState: "saved",
   saveGen: 0,
-  issues: validate(aetherModel),
-  activeDiagramId: "dia-bdd",
+  issues: [],
+  activeDiagramId: null,
   view: "diagram",
   tool: "select",
   linkFromNodeId: null,
@@ -146,23 +165,33 @@ export const useMbse = create<MbseState>((set, get) => ({
   past: [],
   future: [],
 
-  load: async () => {
-    const hadModel = Boolean(get().model)
-    if (!hadModel) set({ status: "loading", error: undefined })
+  load: async (projectId: string) => {
+    const token = ++loadSerial
+    const keep = get().projectId === projectId && get().status === "ready" && Boolean(get().model)
+    if (!keep) set({ status: "loading", projectId, error: undefined, model: null })
     try {
-      const response = await fetch("/api/model", {
-        cache: "no-store",
-        signal: AbortSignal.timeout(8000),
-      })
-      if (!response.ok) throw new Error("The model file could not be read.")
-      const model = (await response.json()) as MbseModel
-      if (model.schema !== MODEL_SCHEMA) throw new Error("This file is not a Keel model.")
+      const response = await fetch(`/api/projects/${projectId}/model`, { cache: "no-store" })
+      if (token !== loadSerial) return
+      if (response.status === 401) {
+        goTo("/login")
+        return
+      }
+      if (!response.ok) {
+        set({ status: "error", projectId, error: await readError(response, "The project could not be opened.") })
+        return
+      }
+      const body = (await response.json()) as { model: MbseModel; canEdit: boolean; role: ProjectRole }
+      if (body.model?.schema !== MODEL_SCHEMA) throw new Error("This file is not a Keel model.")
+      if (token !== loadSerial) return
       set({
-        model,
+        model: body.model,
+        projectId,
+        canEdit: Boolean(body.canEdit),
+        accessRole: body.role,
         status: "ready",
         saveState: "saved",
-        issues: validate(model),
-        activeDiagramId: adopt(model, get().activeDiagramId),
+        issues: validate(body.model),
+        activeDiagramId: adopt(body.model, keep ? get().activeDiagramId : null),
         past: [],
         future: [],
         selection: EMPTY_SELECTION,
@@ -170,28 +199,36 @@ export const useMbse = create<MbseState>((set, get) => ({
         linkFromNodeId: null,
       })
     } catch (error) {
-      if (hadModel) return
+      if (token !== loadSerial) return
       set({
         status: "error",
-        error: error instanceof Error ? error.message : "The model could not be opened.",
+        error: error instanceof Error ? error.message : "The project could not be opened.",
       })
     }
   },
 
   reload: async () => {
+    const projectId = get().projectId
+    if (!projectId) return
     const previous = get().activeDiagramId
-    const response = await fetch("/api/model", { cache: "no-store" })
+    const response = await fetch(`/api/projects/${projectId}/model`, { cache: "no-store" })
+    if (response.status === 401) {
+      goTo("/login")
+      return
+    }
     if (!response.ok) {
       set({ saveState: "error" })
       return
     }
-    const model = (await response.json()) as MbseModel
+    const body = (await response.json()) as { model: MbseModel; canEdit: boolean; role: ProjectRole }
     set({
-      model,
+      model: body.model,
+      canEdit: Boolean(body.canEdit),
+      accessRole: body.role,
       status: "ready",
       saveState: "saved",
-      issues: validate(model),
-      activeDiagramId: adopt(model, previous),
+      issues: validate(body.model),
+      activeDiagramId: adopt(body.model, previous),
       past: [],
       future: [],
       selection: EMPTY_SELECTION,
@@ -200,15 +237,20 @@ export const useMbse = create<MbseState>((set, get) => ({
 
   save: async () => {
     const snapshot = get().model
-    if (!snapshot) return
+    const projectId = get().projectId
+    if (!snapshot || !projectId || !get().canEdit) return
     const gen = get().saveGen
     set({ saveState: "saving" })
     try {
-      const response = await fetch("/api/model", {
+      const response = await fetch(`/api/projects/${projectId}/model`, {
         method: "PUT",
         headers: { "content-type": "application/json" },
         body: JSON.stringify(snapshot),
       })
+      if (response.status === 401) {
+        goTo("/login")
+        return
+      }
       if (!response.ok) throw new Error("Save failed")
       if (get().saveGen === gen) set({ saveState: "saved" })
     } catch {
@@ -218,7 +260,7 @@ export const useMbse = create<MbseState>((set, get) => ({
 
   resetExample: () => {
     const current = get()
-    if (!current.model) return
+    if (!current.model || !current.canEdit) return
     const model = structuredClone(aetherModel)
     set(
       applyModel(current, model, {
@@ -232,8 +274,8 @@ export const useMbse = create<MbseState>((set, get) => ({
   },
 
   undo: () => {
-    const { past, model, future, saveGen } = get()
-    if (!model || past.length === 0) return
+    const { past, model, future, saveGen, canEdit } = get()
+    if (!canEdit || !model || past.length === 0) return
     const previous = past[past.length - 1]
     set({
       past: past.slice(0, -1),
@@ -247,8 +289,8 @@ export const useMbse = create<MbseState>((set, get) => ({
   },
 
   redo: () => {
-    const { past, model, future, saveGen } = get()
-    if (!model || future.length === 0) return
+    const { past, model, future, saveGen, canEdit } = get()
+    if (!canEdit || !model || future.length === 0) return
     const next = future[0]
     set({
       future: future.slice(1),
@@ -263,12 +305,15 @@ export const useMbse = create<MbseState>((set, get) => ({
 
   pushHistory: () => {
     const model = get().model
-    if (!model) return
+    if (!model || !get().canEdit) return
     set({ past: [...get().past, structuredClone(model)].slice(-40), future: [] })
   },
 
   setView: (view) => set({ view }),
-  setTool: (tool) => set({ tool, linkFromNodeId: null }),
+  setTool: (tool) => {
+    if (!get().canEdit && tool !== "select") return
+    set({ tool, linkFromNodeId: null })
+  },
   setActiveDiagram: (diagramId) =>
     set({ activeDiagramId: diagramId, view: "diagram", linkFromNodeId: null, selection: { ...EMPTY_SELECTION, diagramId } }),
 
@@ -315,10 +360,13 @@ export const useMbse = create<MbseState>((set, get) => ({
   clearSelection: () => set({ selection: EMPTY_SELECTION, linkFromNodeId: null }),
   clearFocus: () => set({ focusName: false }),
   cancelLink: () => set({ linkFromNodeId: null, tool: "select" }),
-  armLink: (nodeId) => set({ linkFromNodeId: nodeId }),
+  armLink: (nodeId) => {
+    if (!get().canEdit) return
+    set({ linkFromNodeId: nodeId })
+  },
   toggleSatisfy: (blockId, requirementId) => {
     const current = get()
-    if (!current.model) return
+    if (!current.model || !current.canEdit) return
     const existing = current.model.relationships.find(
       (relationship) =>
         relationship.kind === "satisfy" &&
@@ -333,23 +381,23 @@ export const useMbse = create<MbseState>((set, get) => ({
 
   editProject: (patch) => {
     const current = get()
-    if (!current.model) return
+    if (!current.model || !current.canEdit) return
     set(applyModel(current, updateProject(current.model, patch)))
   },
   editElement: (id, patch) => {
     const current = get()
-    if (!current.model) return
+    if (!current.model || !current.canEdit) return
     set(applyModel(current, updateElement(current.model, id, patch)))
   },
   editDiagram: (id, patch) => {
     const current = get()
-    if (!current.model) return
+    if (!current.model || !current.canEdit) return
     set(applyModel(current, updateDiagram(current.model, id, patch)))
   },
 
   place: (kind, x, y) => {
     const current = get()
-    if (!current.model || !current.activeDiagramId) return
+    if (!current.model || !current.canEdit || !current.activeDiagramId) return
     const result = placeElement(current.model, { diagramId: current.activeDiagramId, kind, x, y })
     if (!result.elementId || !result.nodeId) return
     set(
@@ -364,7 +412,7 @@ export const useMbse = create<MbseState>((set, get) => ({
   link: (sourceNodeId, targetNodeId) => {
     const current = get()
     const tool = current.tool
-    if (!current.model || !current.activeDiagramId) return
+    if (!current.model || !current.canEdit || !current.activeDiagramId) return
     if (tool === "select" || tool === "block" || tool === "requirement" || tool === "package" || tool === "constraint") {
       return
     }
@@ -389,7 +437,7 @@ export const useMbse = create<MbseState>((set, get) => ({
 
   connectPorts: ({ sourceNodeId, targetNodeId, sourceHandle, targetHandle }) => {
     const current = get()
-    if (!current.model || !current.activeDiagramId) return
+    if (!current.model || !current.canEdit || !current.activeDiagramId) return
     const diagram = current.model.diagrams.find((item) => item.id === current.activeDiagramId)
     const source = diagram?.nodes.find((node) => node.id === sourceNodeId)
     const target = diagram?.nodes.find((node) => node.id === targetNodeId)
@@ -413,7 +461,7 @@ export const useMbse = create<MbseState>((set, get) => ({
 
   dragNode: (nodeId, x, y) => {
     const current = get()
-    if (!current.model || !current.activeDiagramId) return
+    if (!current.model || !current.canEdit || !current.activeDiagramId) return
     const model = moveNode(current.model, current.activeDiagramId, nodeId, x, y)
     set({
       model,
@@ -424,7 +472,7 @@ export const useMbse = create<MbseState>((set, get) => ({
 
   removeSelectedFromDiagram: () => {
     const current = get()
-    if (!current.model || !current.activeDiagramId || !current.selection.nodeId) return
+    if (!current.model || !current.canEdit || !current.activeDiagramId || !current.selection.nodeId) return
     set(
       applyModel(current, removeNode(current.model, current.activeDiagramId, current.selection.nodeId), {
         selection: EMPTY_SELECTION,
@@ -435,14 +483,14 @@ export const useMbse = create<MbseState>((set, get) => ({
   deleteSelectedElement: () => {
     const current = get()
     const elementId = current.selection.elementId
-    if (!current.model || !elementId) return
+    if (!current.model || !current.canEdit || !elementId) return
     set(applyModel(current, deleteElement(current.model, elementId), { selection: EMPTY_SELECTION }))
   },
 
   deleteSelectedRelationship: () => {
     const current = get()
     const relationshipId = current.selection.relationshipId
-    if (!current.model || !relationshipId) return
+    if (!current.model || !current.canEdit || !relationshipId) return
     set(
       applyModel(current, removeRelationship(current.model, relationshipId), {
         selection: EMPTY_SELECTION,
@@ -452,7 +500,7 @@ export const useMbse = create<MbseState>((set, get) => ({
 
   showOnDiagram: (elementId) => {
     const current = get()
-    if (!current.model || !current.activeDiagramId) return
+    if (!current.model || !current.canEdit || !current.activeDiagramId) return
     const result = revealElement(current.model, current.activeDiagramId, elementId)
     set(
       applyModel(current, result.model, {
@@ -464,7 +512,7 @@ export const useMbse = create<MbseState>((set, get) => ({
 
   newDiagram: (name, kind) => {
     const current = get()
-    if (!current.model) return
+    if (!current.model || !current.canEdit) return
     const ownerId =
       current.model.diagrams.find((diagram) => diagram.id === current.activeDiagramId)?.ownerId ??
       current.model.elements.find((element) => element.kind === "package" && !element.ownerId)?.id ??
@@ -482,59 +530,59 @@ export const useMbse = create<MbseState>((set, get) => ({
 
   removeDiagram: (diagramId) => {
     const current = get()
-    if (!current.model) return
+    if (!current.model || !current.canEdit) return
     const model = deleteDiagram(current.model, diagramId)
     set(applyModel(current, model, { activeDiagramId: adopt(model, current.activeDiagramId), selection: EMPTY_SELECTION }))
   },
 
   addValue: (elementId) => {
     const current = get()
-    if (!current.model) return
+    if (!current.model || !current.canEdit) return
     set(applyModel(current, addValue(current.model, elementId)))
   },
   editValue: (elementId, valueId, patch) => {
     const current = get()
-    if (!current.model) return
+    if (!current.model || !current.canEdit) return
     set(applyModel(current, updateValue(current.model, elementId, valueId, patch)))
   },
   removeValue: (elementId, valueId) => {
     const current = get()
-    if (!current.model) return
+    if (!current.model || !current.canEdit) return
     set(applyModel(current, removeValue(current.model, elementId, valueId)))
   },
   addPart: (ownerId, typeId) => {
     const current = get()
-    if (!current.model) return
+    if (!current.model || !current.canEdit) return
     set(applyModel(current, addPart(current.model, ownerId, typeId)))
   },
   editPart: (ownerId, partId, patch) => {
     const current = get()
-    if (!current.model) return
+    if (!current.model || !current.canEdit) return
     set(applyModel(current, updatePart(current.model, ownerId, partId, patch)))
   },
   removePart: (ownerId, partId) => {
     const current = get()
-    if (!current.model) return
+    if (!current.model || !current.canEdit) return
     set(applyModel(current, removePart(current.model, ownerId, partId)))
   },
   addPort: (elementId) => {
     const current = get()
-    if (!current.model) return
+    if (!current.model || !current.canEdit) return
     set(applyModel(current, addPort(current.model, elementId)))
   },
   editPort: (elementId, portId, patch) => {
     const current = get()
-    if (!current.model) return
+    if (!current.model || !current.canEdit) return
     set(applyModel(current, updatePort(current.model, elementId, portId, patch)))
   },
   removePort: (elementId, portId) => {
     const current = get()
-    if (!current.model) return
+    if (!current.model || !current.canEdit) return
     set(applyModel(current, removePort(current.model, elementId, portId)))
   },
   editGeometry: (elementId, geometry) => {
     const current = get()
-    if (!current.model) return
+    if (!current.model || !current.canEdit) return
     set(applyModel(current, setGeometry(current.model, elementId, geometry)))
   },
 }))
